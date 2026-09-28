@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryTokenBucketStrategyTest {
+
     @Test
     void allowsRequestsUpToCapacityThenDenies() {
         Instant start = Instant.parse("2026-01-01T00:00:00Z");
@@ -60,33 +61,5 @@ class InMemoryTokenBucketStrategyTest {
 
         // client-y is unaffected by client-x's usage
         assertTrue(strategy.tryConsume("client-y", config).allowed());
-    }
-
-    /** Simple mutable Clock for simulating elapsed time in tests without real sleeps. */
-    private static class MutableClock extends Clock {
-        private Instant instant;
-
-        MutableClock(Instant instant) {
-            this.instant = instant;
-        }
-
-        void advanceSeconds(long seconds) {
-            instant = instant.plusSeconds(seconds);
-        }
-
-        @Override
-        public ZoneOffset getZone() {
-            return ZoneOffset.UTC;
-        }
-
-        @Override
-        public Clock withZone(java.time.ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
-            return instant;
-        }
     }
 }
