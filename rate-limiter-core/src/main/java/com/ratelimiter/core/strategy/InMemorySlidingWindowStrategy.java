@@ -69,7 +69,13 @@ public class InMemorySlidingWindowStrategy implements RateLimitStrategy {
 
             // Step 4: count what's left, compare to config.capacity().
             if (slidingUserWindow.timestamps.size() >= capacity) {
-                long retryAfter = Duration.between(now, resetAt).getSeconds();
+                // round up the retryAfter value
+                Duration gap = Duration.between(now, resetAt);
+                long wholeSeconds = gap.getSeconds();
+                // Fetch the fractional nano seconds
+                long fractionalNanos = gap.getNano();
+                wholeSeconds =  (fractionalNanos > 0) ? wholeSeconds + 1 : wholeSeconds;
+                long retryAfter = wholeSeconds;
                 return RateLimitResult.deny(resetAt, retryAfter);
             }
 
