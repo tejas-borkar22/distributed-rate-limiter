@@ -25,7 +25,7 @@ public class RedisTokenBucketStrategy implements RateLimitStrategy {
     public RedisTokenBucketStrategy(JedisPool pool, Clock clock) {
         this.pool = pool;
         this.clock = clock;
-        // TODO 1: load /lua/token_bucket.lua from the classpath into `script`.
+        // Step 1: load /lua/token_bucket.lua from the classpath into `script`.
         this.script = loadScript();
     }
 
@@ -42,14 +42,13 @@ public class RedisTokenBucketStrategy implements RateLimitStrategy {
 
     @Override
     public RateLimitResult tryConsume(String clientKey, RateLimitConfig config) {
-        // TODO 2: build the Redis key. Use a prefix, e.g. "rl:tb:" + clientKey,
-        //   so rate limiter keys never collide with anything else in Redis.
+        // Step 2: build the Redis key. Use a prefix, e.g. "rl:tb:" + clientKey,
+        // so rate limiter keys never collide with anything else in Redis.
         String redisClientKey =  RL_TOKEN_BUCKET_PREFIX + clientKey;
-
-        // TODO 3: borrow a connection and run the script.
         String capacityArg = String.valueOf(config.capacity());
         String windowArg = String.valueOf(config.windowSeconds());
 
+        // Step 3: borrow a connection and run the script.
         try (Jedis jedis = pool.getResource()) {
             Object raw = jedis.eval(script, List.of(redisClientKey), List.of(capacityArg, windowArg));
             // The script returns a table, which Jedis hands back as a List of Longs. Cast: List<?> result = (List<?>) raw;
@@ -59,7 +58,7 @@ public class RedisTokenBucketStrategy implements RateLimitStrategy {
             Long remainingTokens = (Long) result.get(1);
             Long retryAfterMs = (Long) result.get(2);
 
-            // TODO 4: convert to a RateLimitResult.
+            // Step 4: convert to a RateLimitResult.
             //  allowed (get(0) == 1): RateLimitResult.allow(remaining, resetAt)
             if(tokenStatus.equals(1L)){
                 //  resetAt: clock.instant().plusSeconds(config.windowSeconds()), same as the in-memory version.
