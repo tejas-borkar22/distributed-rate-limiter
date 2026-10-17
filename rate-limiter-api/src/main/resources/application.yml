@@ -1,8 +1,9 @@
 ratelimiter:
   backend: IN_MEMORY
   algorithm: TOKEN_BUCKET
-  capacity: 10
+  capacity: 3
   window-seconds: 60
+  fail-open: true   # Redis down: true = allow requests, false = reject with 503 status code
   redis:
     host: localhost
     port: 6379

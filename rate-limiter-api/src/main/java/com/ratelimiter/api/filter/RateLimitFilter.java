@@ -2,6 +2,9 @@ package com.ratelimiter.api.filter;
 
 import java.io.IOException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.ratelimiter.api.config.RateLimiterProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -19,6 +22,8 @@ import com.ratelimiter.core.RateLimitStrategy;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
+
     private static final String API_KEY_HEADER = "X-API-Key";
     private static final String LIMIT_HEADER = "X-RateLimit-Limit";
     private static final String REMAINING_HEADER = "X-RateLimit-Remaining";
@@ -27,11 +32,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimitStrategy strategy;
     private final RateLimitConfig config;
+    private final boolean failOpen;
 
     // Spring injects both beans from RateLimiterConfiguration
-    public RateLimitFilter(RateLimitStrategy strategy, RateLimitConfig config) {
+    public RateLimitFilter(RateLimitStrategy strategy, RateLimitConfig config, RateLimiterProperties props) {
         this.strategy = strategy;
         this.config = config;
+        this.failOpen = props.failOpen();  // read the setting once at startup
     }
 
     @Override
@@ -39,7 +46,27 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
 
         String clientKey = resolveClientKey(request);
-        RateLimitResult result = strategy.tryConsume(clientKey, config);
+        RateLimitResult result;
+        try {
+            result = strategy.tryConsume(clientKey, config);
+        } catch (RuntimeException e) {
+            // Limiter backend failed (e.g. Redis down). Passing e keeps the stack trace in the log
+            log.warn("Rate limiter check failed; failOpen={}", failOpen, e);
+
+            if (failOpen) {
+                // allow: the request continues to the controller
+                chain.doFilter(request, response);
+            } else {
+                // reject with a generic 503;
+                response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+                response.setContentType("application/json");
+                response.setCharacterEncoding("UTF-8");
+                response.getWriter().write(
+                        "{\"error\":\"service_unavailable\","
+                                + "\"message\":\"Service temporarily unavailable. Please try again later.\"}");
+            }
+            return;
+        }
 
         // Set headers BEFORE continuing: once the controller writes, headers may be ignored
         response.setHeader(LIMIT_HEADER, String.valueOf(config.capacity()));
@@ -50,7 +77,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (!result.allowed()) {
             long retryAfter = result.retryAfterSeconds();
 
-            response.setHeader(RETRY_AFTER_HEADER, String.valueOf(result.retryAfterSeconds()));
+            response.setHeader(RETRY_AFTER_HEADER, String.valueOf(retryAfter));
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
 
             // Human-readable detail lives in the body, not in headers
@@ -63,7 +90,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
             return; // stop here: do NOT call chain.doFilter() on deny
         }
-
         chain.doFilter(request, response); // allowed: pass to next filter / controller
     }
 
