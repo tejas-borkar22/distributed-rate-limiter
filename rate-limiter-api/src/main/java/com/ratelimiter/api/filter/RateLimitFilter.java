@@ -18,6 +18,9 @@ import com.ratelimiter.core.RateLimitConfig;
 import com.ratelimiter.core.RateLimitResult;
 import com.ratelimiter.core.RateLimitStrategy;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+
 // Runs before every request; lets it through or rejects it with 429 status(too many requests).
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
@@ -34,11 +37,29 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimitConfig config;
     private final boolean failOpen;
 
-    // Spring injects both beans from RateLimiterConfiguration
-    public RateLimitFilter(RateLimitStrategy strategy, RateLimitConfig config, RateLimiterProperties props) {
+    // One counter per outcome; same metric name, only the "outcome" tag differs
+    private final Counter allowedCounter;
+    private final Counter deniedCounter;
+    private final Counter errorCounter;
+
+    // Spring injects beans from RateLimiterConfiguration
+    public RateLimitFilter(RateLimitStrategy strategy, RateLimitConfig config, RateLimiterProperties props, MeterRegistry registry) {
         this.strategy = strategy;
         this.config = config;
         this.failOpen = props.failOpen();  // read the setting once at startup
+
+        // Created once here, only incremented per request
+        this.allowedCounter = outcomeCounter(registry, "allowed");
+        this.deniedCounter = outcomeCounter(registry, "denied");
+        this.errorCounter = outcomeCounter(registry, "error");
+    }
+
+    // Builder method for counters : builds ratelimiter.requests{outcome=...}. Tag values are a fixed set: never use clientKey
+    private static Counter outcomeCounter(MeterRegistry registry, String outcome) {
+        return Counter.builder("ratelimiter.requests")
+                .tag("outcome", outcome)
+                .description("Rate limiter decisions by outcome")
+                .register(registry);
     }
 
     // Skip rate limiting for monitoring endpoints so health checks never get 429 response.
@@ -58,6 +79,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         } catch (RuntimeException e) {
             // Limiter backend failed (e.g. Redis down). Passing e keeps the stack trace in the log
             log.warn("Rate limiter check failed; failOpen={}", failOpen, e);
+            errorCounter.increment(); // limiter failed: alert on a rise (fail-open = unlimited traffic)
 
             if (failOpen) {
                 // allow: the request continues to the controller
@@ -81,6 +103,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         // request is denied
         if (!result.allowed()) {
+            deniedCounter.increment(); // rejected with 429
             long retryAfter = result.retryAfterSeconds();
 
             response.setHeader(RETRY_AFTER_HEADER, String.valueOf(retryAfter));
@@ -96,6 +119,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
             return; // stop here: do NOT call chain.doFilter() on deny
         }
+        allowedCounter.increment(); // rate limiter allows; counted before the controller runs
         chain.doFilter(request, response); // allowed: pass to next filter / controller
     }
 
