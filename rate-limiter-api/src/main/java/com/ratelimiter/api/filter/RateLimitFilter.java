@@ -41,6 +41,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.failOpen = props.failOpen();  // read the setting once at startup
     }
 
+    // Skip rate limiting for monitoring endpoints so health checks never get 429 response.
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
