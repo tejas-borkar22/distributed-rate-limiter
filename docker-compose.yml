@@ -1,0 +1,32 @@
+services:
+  redis:
+    image: redis:7-alpine
+    # Compose marks redis "healthy" only when this command succeeds
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]   # prints PONG when Redis is ready
+      interval: 5s                         # run the check every 5 seconds
+      timeout: 3s                          # a check taking longer than this counts as failed
+      retries: 5                           # 5 failures in a row = unhealthy
+
+  api:
+    build:
+      context: .                                # repo root (needs parent pom + core)
+      dockerfile: rate-limiter-api/Dockerfile   # relative to the context
+    ports:
+      - "8080:8080"                             # your machine : container
+    # Override application.yml settings; RATELIMITER_REDIS_HOST -> ratelimiter.redis.host
+    environment:
+      RATELIMITER_BACKEND: REDIS                # use Redis instead of in-memory
+      RATELIMITER_REDIS_HOST: redis             # the service name, NOT localhost
+      RATELIMITER_REDIS_PORT: "6379"
+    # Start the api only after redis passes its healthcheck
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Docker calls the actuator endpoint to mark the api healthy or unhealthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]  # -f: fail on HTTP errors
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s                         # failures during Spring's startup don't count
